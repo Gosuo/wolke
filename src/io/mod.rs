@@ -1,17 +1,78 @@
 use nom::{
-    bytes::complete::{tag, take_while},
+    bytes::complete::{tag, take_till, take_while},
     character::complete::line_ending,
-    combinator::map_res,
-    multi::separated_list0,
+    combinator::{eof, map_res},
+    multi::{many0, separated_list0},
     number::complete::float,
     sequence::{preceded, terminated},
     IResult,
 };
-use std::str::FromStr;
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+use thiserror::Error;
 
-use crate::point::{PointXYZ, PointXYZRGBA, ViewPoint};
+use crate::point::{Point, PointCloud, PointCloudType, PointXYZ, PointXYZRGBA, ViewPoint, PointType};
 
-pub struct PcdReader {}
+#[derive(Debug, Error)]
+pub enum PcdParseError {
+    #[error("Empty buffer in PcdReader, did you call PcdReader::read?")]
+    EmptyBuffer,
+    #[error("Nom parsing error {err} -> {error_kind}")]
+    NomError { err: String, error_kind: String },
+}
+
+impl From<nom::Err<nom::error::Error<&[u8]>>> for PcdParseError {
+    fn from(value: nom::Err<nom::error::Error<&[u8]>>) -> Self {
+        Self::NomError {
+            err: value.to_string(),
+            error_kind: value.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PcdReader {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl PcdReader {
+    pub fn new<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            bytes: vec![],
+        }
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self {
+            path: PathBuf::new(),
+            bytes,
+        }
+    }
+
+    pub fn parse<P: Point>(&self) -> Result<PointCloudType, PcdParseError> {
+        if self.bytes.is_empty() {
+            return Err(PcdParseError::EmptyBuffer);
+        }
+
+        let (_, header) = parse_header(&self.bytes)?;
+
+        let point_parser = match header.data_type {
+            PcdDataType::Ascii => todo!(),
+            PcdDataType::Binary => todo!(),
+            PcdDataType::BinaryCompressed => todo!(),
+        };
+        todo!()
+    }
+
+    pub fn read(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.bytes = std::fs::read(&self.path)?;
+        Ok(())
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub struct PcdHeader {
@@ -25,6 +86,7 @@ pub struct PcdHeader {
     viewpoint: ViewPoint,
     points: usize,
     data_type: PcdDataType,
+    data_offset: usize,
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
@@ -50,7 +112,7 @@ impl PcdVersion {
             b".7" => Ok(PcdVersion::V0_7),
             unknown => Err(format!(
                 "Unknown version byte string: {}",
-                std::str::from_utf8(unknown).unwrap() // TODO remove unwrap
+                std::str::from_utf8(unknown).unwrap_or("Unable to parse byte string")
             )),
         }
     }
@@ -76,7 +138,7 @@ impl PcdField {
             b"x y z normal_x normal_y normal_z" => Ok(PcdField::XYZ_NXNYNZ),
             unknown => Err(format!(
                 "Unknown fields type: {}",
-                std::str::from_utf8(unknown).unwrap() // TODO remove unwrap
+                std::str::from_utf8(unknown).unwrap_or("Unable to parse byte string")
             )),
         }
     }
@@ -98,7 +160,7 @@ impl PcdDataType {
             b"binary_compressed" => Ok(PcdDataType::BinaryCompressed),
             unknown => Err(format!(
                 "Unknown data byte string: {}",
-                std::str::from_utf8(unknown).unwrap() // TODO remove unwrap
+                std::str::from_utf8(unknown).unwrap_or("Unable to parse byte string")
             )),
         }
     }
@@ -132,6 +194,9 @@ fn skip_line(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 fn parse_header(input: &[u8]) -> IResult<&[u8], PcdHeader> {
+    // Save the original length of the input, to calculate the data offset
+    let original_length = input.len();
+
     // TODO Do this better, there has to be a nom way
     let (input, _) = if input[0] == b'#' {
         skip_line(input)?
@@ -150,6 +215,9 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], PcdHeader> {
     let (input, points) = terminated(parse_points, line_ending)(input)?;
     let (input, data_type) = terminated(parse_data, line_ending)(input)?;
 
+    // Calculate the data offset here so we can easily start parsing the points from that point on
+    let data_offset = original_length - input.len();
+
     let header = PcdHeader {
         version,
         fields,
@@ -161,6 +229,7 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], PcdHeader> {
         viewpoint,
         points,
         data_type,
+        data_offset,
     };
 
     Ok((input, header))
@@ -194,7 +263,7 @@ fn parse_size(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
     assert!(
         remainder.is_empty(),
         "While parsing the sizes of the PCD file, something wasn't parsed to the end and this remained: [{}]",
-        std::str::from_utf8(remainder).unwrap() // TODO remove unwrap
+        std::str::from_utf8(remainder).unwrap_or("Unable to parse byte string")
     );
 
     Ok((input, sizes))
@@ -214,7 +283,7 @@ fn parse_type(input: &[u8]) -> IResult<&[u8], Vec<PcdType>> {
     assert!(
         remainder.is_empty(),
         "While parsing the types of the PCD file, something wasn't parsed to the end and this remained: [{}]",
-        std::str::from_utf8(remainder).unwrap() // TODO remove unwrap
+        std::str::from_utf8(remainder).unwrap_or("Unable to parse byte string")
     );
 
     Ok((input, types))
@@ -228,7 +297,7 @@ fn parse_count(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
     assert!(
         remainder.is_empty(),
         "While parsing the sizes of the PCD file, something wasn't parsed to the end and this remained: [{}]",
-        std::str::from_utf8(remainder).unwrap() // TODO remove unwrap
+        std::str::from_utf8(remainder).unwrap_or("Unable to parse byte string")
     );
 
     Ok((input, counts))
@@ -289,6 +358,10 @@ fn parse_data(input: &[u8]) -> IResult<&[u8], PcdDataType> {
     Ok((input, point_type))
 }
 
+fn parse_point(input: &[u8], data_type: PcdDataType, point_types: PcdType) -> IResult<&[u8], PointType> {
+    todo!()
+}
+
 fn parse_point_xyz(input: &[u8]) -> IResult<&[u8], PointXYZ> {
     let (input, points) = take_while(|c| c != b'\n')(input)?;
 
@@ -296,7 +369,7 @@ fn parse_point_xyz(input: &[u8]) -> IResult<&[u8], PointXYZ> {
     assert!(
         remainder.is_empty(),
         "While parsing the sizes of the PCD file, something wasn't parsed to the end and this remained: [{}]",
-        std::str::from_utf8(remainder).unwrap() // TODO remove unwrap
+        std::str::from_utf8(remainder).unwrap_or("Unable to parse byte string")
     );
 
     let point = PointXYZ::from(&points[..]);
@@ -311,30 +384,42 @@ fn parse_point_xyzrgba(input: &[u8]) -> IResult<&[u8], PointXYZRGBA> {
     assert!(
         remainder.is_empty(),
         "While parsing the sizes of the PCD file, something wasn't parsed to the end and this remained: [{}]",
-        std::str::from_utf8(remainder).unwrap() // TODO remove unwrap
+        std::str::from_utf8(remainder).unwrap_or("Unable to parse byte string")
     );
 
-    let point = PointXYZRGBA::try_from(&points[..]).unwrap();
+    let point = PointXYZRGBA::try_from(&points[..]).unwrap(); // TODO remove unwrap and probably should use PointXZYRGBA::new
 
     Ok((input, point))
 }
 
 fn parse_points_xyzrgba(input: &[u8]) -> IResult<&[u8], Vec<PointXYZRGBA>> {
-    todo!()
+    let (remainder, result) =
+        terminated(many0(map_res(parse_line, parse_point_xyzrgba)), eof)(input)?;
+
+    let points = result
+        .into_iter()
+        .map(|(remain, point)| {
+            assert!(remain.is_empty());
+            point
+        })
+        .collect::<Vec<_>>();
+
+    Ok((remainder, points))
+}
+
+fn parse_line(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    terminated(take_till(|c| c == b'\n'), line_ending)(input)
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::{
-        io::parse_point_xyzrgba,
-        point::{PointXYZ, PointXYZRGBA, ViewPoint},
-    };
+    use crate::point::{PointXYZ, PointXYZRGBA, ViewPoint};
 
     use super::{
-        parse_data, parse_fields, parse_header, parse_point_xyz, parse_size, parse_type,
-        parse_version, parse_viewpoint, parse_width, PcdDataType, PcdField, PcdHeader, PcdType,
-        PcdVersion,
+        parse_data, parse_fields, parse_header, parse_line, parse_point_xyz, parse_point_xyzrgba,
+        parse_points_xyzrgba, parse_size, parse_type, parse_version, parse_viewpoint, parse_width,
+        PcdDataType, PcdField, PcdHeader, PcdType, PcdVersion,
     };
 
     #[test]
@@ -500,9 +585,9 @@ mod tests {
         assert!(!remainder.is_empty()); // We check here wether we get the correct remainder. '\nremainder' should be returned
         assert_eq!(result, usize::MIN);
 
-        // TODO This is very probably wrong for non 64-bit systems
-        let input = b"WIDTH 18446744073709551615";
-        let (remainder, result) = parse_width(input).unwrap();
+        let max_bytes = usize::MAX.to_string().as_bytes().to_vec();
+        let input = [b"WIDTH ".to_vec(), max_bytes].concat();
+        let (remainder, result) = parse_width(&input).unwrap();
         assert!(remainder.is_empty());
         assert_eq!(result, usize::MAX);
     }
@@ -601,6 +686,7 @@ mod tests {
             viewpoint: ViewPoint::from(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0][..]),
             points: 213,
             data_type: PcdDataType::Ascii,
+            data_offset: 175,
         };
         assert_eq!(header, expected);
     }
@@ -627,5 +713,39 @@ mod tests {
         assert!(remainder.is_empty());
 
         assert_eq!(point, PointXYZRGBA::new(0.93773, 0.33763, 0.0, 4.2108e+06))
+    }
+
+    #[test]
+    fn test_parse_line_valid_input() {
+        let input = b"line1\n";
+
+        let result = parse_line(input);
+        assert!(result.is_ok());
+        let (remainder, line) = result.unwrap();
+
+        assert_eq!(line, b"line1");
+        assert!(remainder.is_empty());
+        // assert_eq!(remainder, b"\n");
+    }
+
+    #[test]
+    fn test_parse_points_xyzrgba_valid_inputs() {
+        let input = b"0.93773 0.33763 0 4.2108e+06\n0.90805 0.35641 0 4.2108e+06\n0.81915 0.32 0.01 4.2108e+06\n0.97192 0.278 0.1 4.2108e+06\n0.944 0.29474 0.1 4.2108e+06\n";
+
+        let result = parse_points_xyzrgba(input);
+        assert!(result.is_ok());
+
+        let (remainder, lines) = result.unwrap();
+        assert!(remainder.is_empty());
+        assert_eq!(
+            lines,
+            vec![
+                PointXYZRGBA::new(0.93773, 0.33763, 0.0, 4.2108e+06),
+                PointXYZRGBA::new(0.90805, 0.35641, 0.0, 4.2108e+06),
+                PointXYZRGBA::new(0.81915, 0.32, 0.01, 4.2108e+06),
+                PointXYZRGBA::new(0.97192, 0.278, 0.1, 4.2108e+06),
+                PointXYZRGBA::new(0.944, 0.29474, 0.1, 4.2108e+06)
+            ]
+        );
     }
 }

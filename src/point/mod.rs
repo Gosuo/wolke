@@ -2,6 +2,13 @@ use std::ops::{Add, AddAssign};
 
 pub trait Point {}
 
+#[allow(non_camel_case_types)]
+#[derive(Debug, PartialEq)]
+pub enum PointType {
+    XYZ(PointXYZ),
+    XYZ_RGBA(PointXYZRGBA),
+}
+
 #[repr(align(16))]
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct PointXYZ {
@@ -248,6 +255,13 @@ impl From<&[f32]> for ViewPoint {
     }
 }
 
+#[allow(non_camel_case_types)]
+#[derive(Debug)]
+pub enum PointCloudType {
+    XYZ(PointCloud<PointXYZ>),
+    XYZ_RGBA(PointCloud<PointXYZRGBA>),
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct PointCloudHeader {
     sequence: u32,
@@ -260,10 +274,21 @@ pub struct PointCloud<P>
 where
     P: Point,
 {
-    header: PointCloudHeader,
+    header: Option<PointCloudHeader>,
     width: usize,
     height: usize,
     points: Vec<P>,
+}
+
+impl<P: Point> PointCloud<P> {
+    pub fn new(points: Vec<P>, width: usize, height: usize) -> Self {
+        Self {
+            header: None,
+            width,
+            height,
+            points,
+        }
+    }
 }
 
 #[cfg(test)]
