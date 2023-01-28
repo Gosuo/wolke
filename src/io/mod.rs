@@ -13,7 +13,9 @@ use std::{
 };
 use thiserror::Error;
 
-use crate::point::{Point, PointCloud, PointCloudType, PointXYZ, PointXYZRGBA, ViewPoint, PointType};
+use crate::point::{
+    Point, PointCloud, PointCloudType, PointType, PointXYZ, PointXYZRGBA, ViewPoint,
+};
 
 #[derive(Debug, Error)]
 pub enum PcdParseError {
@@ -207,7 +209,7 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], PcdHeader> {
     let (input, version) = terminated(parse_version, line_ending)(input)?;
     let (input, fields) = terminated(parse_fields, line_ending)(input)?;
     let (input, size) = terminated(parse_size, line_ending)(input)?;
-    let (input, types) = terminated(parse_type, line_ending)(input)?;
+    let (input, types) = terminated(parse_types, line_ending)(input)?;
     let (input, counts) = terminated(parse_count, line_ending)(input)?;
     let (input, width) = terminated(parse_width, line_ending)(input)?;
     let (input, height) = terminated(parse_height, line_ending)(input)?;
@@ -270,7 +272,7 @@ fn parse_size(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
 }
 
 // TODO Write more unit tests
-fn parse_type(input: &[u8]) -> IResult<&[u8], Vec<PcdType>> {
+fn parse_types(input: &[u8]) -> IResult<&[u8], Vec<PcdType>> {
     let (input, types) = preceded(tag(b"TYPE "), take_while(|c| c != b'\n'))(input)?;
 
     let (remainder, types) = separated_list0(
@@ -358,7 +360,11 @@ fn parse_data(input: &[u8]) -> IResult<&[u8], PcdDataType> {
     Ok((input, point_type))
 }
 
-fn parse_point(input: &[u8], data_type: PcdDataType, point_types: PcdType) -> IResult<&[u8], PointType> {
+fn parse_point(
+    input: &[u8],
+    data_type: PcdDataType,
+    point_types: PcdType,
+) -> IResult<&[u8], PointType> {
     todo!()
 }
 
@@ -418,7 +424,7 @@ mod tests {
 
     use super::{
         parse_data, parse_fields, parse_header, parse_line, parse_point_xyz, parse_point_xyzrgba,
-        parse_points_xyzrgba, parse_size, parse_type, parse_version, parse_viewpoint, parse_width,
+        parse_points_xyzrgba, parse_size, parse_types, parse_version, parse_viewpoint, parse_width,
         PcdDataType, PcdField, PcdHeader, PcdType, PcdVersion,
     };
 
@@ -541,7 +547,7 @@ mod tests {
     fn test_parse_type_valid_input() {
         let input = b"TYPE F F F F";
 
-        let (remainder, result) = parse_type(input).unwrap();
+        let (remainder, result) = parse_types(input).unwrap();
         assert!(remainder.is_empty());
         assert_eq!(
             result,
@@ -555,7 +561,7 @@ mod tests {
 
         let input = b"TYPE F F I U";
 
-        let (remainder, result) = parse_type(input).unwrap();
+        let (remainder, result) = parse_types(input).unwrap();
         assert!(remainder.is_empty());
         assert_eq!(
             result,
