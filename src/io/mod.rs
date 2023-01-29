@@ -79,7 +79,7 @@ impl PcdReader {
         }
     }
 
-    pub fn read(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn read(&mut self) -> Result<(), std::io::Error> {
         self.bytes = std::fs::read(&self.path)?;
         Ok(())
     }
