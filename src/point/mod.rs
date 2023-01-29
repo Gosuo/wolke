@@ -208,9 +208,7 @@ impl TryFrom<&[f32]> for PointXYZRGBA {
 
     fn try_from(value: &[f32]) -> Result<Self, Self::Error> {
         if value.len() < 4 {
-            Err(format!(
-                "Creating a PointXYZRGBA from less than 4 floats is not possible"
-            ))
+            Err("Creating a PointXYZRGBA from less than 4 floats is not possible".to_string())
         } else {
             let input = [value[0], value[1], value[2], value[3]];
             Ok(Self::from(&input))
