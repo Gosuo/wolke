@@ -1,5 +1,6 @@
 use nom::{
-    bytes::complete::{tag, take_till, take_while},
+    branch::alt,
+    bytes::complete::{is_not, tag, take_while},
     character::complete::line_ending,
     combinator::{eof, map_res},
     multi::{many0, separated_list0},
@@ -7,15 +8,14 @@ use nom::{
     sequence::{preceded, terminated},
     IResult,
 };
+
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
 use thiserror::Error;
 
-use crate::point::{
-    Point, PointCloud, PointCloudType, PointType, PointXYZ, PointXYZRGBA, ViewPoint,
-};
+use crate::point::{PointCloud, PointCloudType, PointXYZ, PointXYZRGBA, ViewPoint};
 
 #[derive(Debug, Error)]
 pub enum PcdParseError {
@@ -55,19 +55,28 @@ impl PcdReader {
         }
     }
 
-    pub fn parse<P: Point>(&self) -> Result<PointCloudType, PcdParseError> {
+    pub fn parse(&self) -> Result<PointCloudType, PcdParseError> {
         if self.bytes.is_empty() {
             return Err(PcdParseError::EmptyBuffer);
         }
 
-        let (_, header) = parse_header(&self.bytes)?;
+        let (input, header) = parse_header(&self.bytes)?;
 
-        let point_parser = match header.data_type {
-            PcdDataType::Ascii => todo!(),
+        match header.data_type {
+            PcdDataType::Ascii => match header.fields {
+                PcdField::XYZ => todo!(),
+                PcdField::XYZ_RGB => todo!(),
+                PcdField::XYZ_RGBA => {
+                    let (eof, points) = parse_all_xyzrgba_ascii(input)?;
+
+                    let cloud = PointCloud::new(points, header.width, header.height);
+                    Ok(PointCloudType::XYZ_RGBA(cloud))
+                }
+                PcdField::XYZ_NXNYNZ => todo!(),
+            },
             PcdDataType::Binary => todo!(),
             PcdDataType::BinaryCompressed => todo!(),
-        };
-        todo!()
+        }
     }
 
     pub fn read(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -217,7 +226,7 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], PcdHeader> {
     let (input, points) = terminated(parse_points, line_ending)(input)?;
     let (input, data_type) = terminated(parse_data, line_ending)(input)?;
 
-    // Calculate the data offset here so we can easily start parsing the points from that point on
+    // Calculate the data offset here so we can easily start parsing the points from that point on. Important for binary parsing
     let data_offset = original_length - input.len();
 
     let header = PcdHeader {
@@ -360,72 +369,63 @@ fn parse_data(input: &[u8]) -> IResult<&[u8], PcdDataType> {
     Ok((input, point_type))
 }
 
-fn parse_point(
-    input: &[u8],
-    data_type: PcdDataType,
-    point_types: PcdType,
-) -> IResult<&[u8], PointType> {
-    todo!()
-}
-
-fn parse_point_xyz(input: &[u8]) -> IResult<&[u8], PointXYZ> {
-    let (input, points) = take_while(|c| c != b'\n')(input)?;
-
-    let (remainder, points) = separated_list0(tag(b" "), nom::number::complete::float)(points)?;
-    assert!(
-        remainder.is_empty(),
-        "While parsing the sizes of the PCD file, something wasn't parsed to the end and this remained: [{}]",
-        std::str::from_utf8(remainder).unwrap_or("Unable to parse byte string")
-    );
-
-    let point = PointXYZ::from(&points[..]);
-
-    Ok((input, point))
-}
-
-fn parse_point_xyzrgba(input: &[u8]) -> IResult<&[u8], PointXYZRGBA> {
-    let (input, points) = take_while(|c| c != b'\n')(input)?;
-
-    let (remainder, points) = separated_list0(tag(b" "), nom::number::complete::float)(points)?;
-    assert!(
-        remainder.is_empty(),
-        "While parsing the sizes of the PCD file, something wasn't parsed to the end and this remained: [{}]",
-        std::str::from_utf8(remainder).unwrap_or("Unable to parse byte string")
-    );
-
-    let point = PointXYZRGBA::try_from(&points[..]).unwrap(); // TODO remove unwrap and probably should use PointXZYRGBA::new
-
-    Ok((input, point))
-}
-
-fn parse_points_xyzrgba(input: &[u8]) -> IResult<&[u8], Vec<PointXYZRGBA>> {
-    let (remainder, result) =
-        terminated(many0(map_res(parse_line, parse_point_xyzrgba)), eof)(input)?;
-
-    let points = result
-        .into_iter()
-        .map(|(remain, point)| {
-            assert!(remain.is_empty());
-            point
-        })
-        .collect::<Vec<_>>();
-
-    Ok((remainder, points))
-}
-
 fn parse_line(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    terminated(take_till(|c| c == b'\n'), line_ending)(input)
+    // terminated(take_till(|c| c == b'\n'), line_ending)(input)
+    terminated(is_not("\n"), alt((tag(b"\n"), eof)))(input)
 }
+
+fn parse_all_lines(input: &[u8]) -> IResult<&[u8], Vec<&[u8]>> {
+    many0(parse_line)(input)
+}
+
+macro_rules! parse_ascii_impl {
+    ($point_type:ty, $parser:expr, $count:expr, $fn_name:ident) => {
+        fn $fn_name(input: &[u8]) -> IResult<&[u8], $point_type> {
+            let (input, point_data) = take_while(|c| c != b'\n')(input)?;
+
+            let (remainder, point_data) = separated_list0(tag(b" "), $parser)(point_data)?;
+            assert!(point_data.len() == $count);
+
+            let point = <$point_type>::try_from(&point_data[..]).unwrap();
+            Ok((input, point))
+        }
+    };
+}
+
+macro_rules! parse_multi_ascii_impl {
+    ($point_type:ty, $parser:expr, $fn_name:ident) => {
+        fn $fn_name(input: &[u8]) -> IResult<&[u8], Vec<$point_type>> {
+            let (input, points) = many0(map_res(parse_line, $parser))(input)?;
+
+            let points = points
+                .into_iter()
+                .map(|(remain, point)| point)
+                .collect::<Vec<_>>();
+
+            Ok((input, points))
+        }
+    };
+}
+
+parse_ascii_impl!(PointXYZ, float, 3, parse_point_xyz_ascii);
+parse_ascii_impl!(PointXYZRGBA, float, 4, parse_point_xyzrgba_ascii);
+
+parse_multi_ascii_impl!(
+    PointXYZRGBA,
+    parse_point_xyzrgba_ascii,
+    parse_all_xyzrgba_ascii
+);
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
 
-    use crate::point::{PointXYZ, PointXYZRGBA, ViewPoint};
+    use crate::point::{PointCloud, PointCloudType, PointXYZRGBA, ViewPoint};
 
     use super::{
-        parse_data, parse_fields, parse_header, parse_line, parse_point_xyz, parse_point_xyzrgba,
-        parse_points_xyzrgba, parse_size, parse_types, parse_version, parse_viewpoint, parse_width,
-        PcdDataType, PcdField, PcdHeader, PcdType, PcdVersion,
+        parse_data, parse_fields, parse_header, parse_line, parse_point_xyzrgba_ascii, parse_size,
+        parse_types, parse_version, parse_viewpoint, parse_width, PcdDataType, PcdField, PcdHeader,
+        PcdReader, PcdType, PcdVersion,
     };
 
     #[test]
@@ -698,27 +698,26 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_point_xyz_valid_input() {
-        let input = b"0.93773 0.33763 0";
-
-        let result = parse_point_xyz(input);
-        assert!(result.is_ok());
-        let (remainder, point) = result.unwrap();
-        assert!(remainder.is_empty());
-
-        assert_eq!(point, PointXYZ::new(0.93773, 0.33763, 0.0))
-    }
-
-    #[test]
-    fn test_parse_point_xyzrgba_valid_input() {
+    fn test_parse_point_ascii_valid_input() {
         let input = b"0.93773 0.33763 0 4.2108e+06";
+        let pcd_point_type = PcdField::XYZ_RGBA;
 
-        let result = parse_point_xyzrgba(input);
+        let result = parse_point_xyzrgba_ascii(input);
         assert!(result.is_ok());
         let (remainder, point) = result.unwrap();
         assert!(remainder.is_empty());
 
-        assert_eq!(point, PointXYZRGBA::new(0.93773, 0.33763, 0.0, 4.2108e+06))
+        assert_eq!(point, PointXYZRGBA::new(0.93773, 0.33763, 0.0, 4.2108e+06));
+
+        let input = b"0.93773 0.33763 0 5";
+        let pcd_point_type = PcdField::XYZ;
+
+        let result = parse_point_xyzrgba_ascii(input);
+        assert!(result.is_ok());
+        let (remainder, point) = result.unwrap();
+        assert!(remainder.is_empty());
+
+        assert_eq!(point, PointXYZRGBA::new(0.93773, 0.33763, 0.0, 5.0));
     }
 
     #[test]
@@ -731,27 +730,264 @@ mod tests {
 
         assert_eq!(line, b"line1");
         assert!(remainder.is_empty());
-        // assert_eq!(remainder, b"\n");
     }
 
     #[test]
-    fn test_parse_points_xyzrgba_valid_inputs() {
-        let input = b"0.93773 0.33763 0 4.2108e+06\n0.90805 0.35641 0 4.2108e+06\n0.81915 0.32 0.01 4.2108e+06\n0.97192 0.278 0.1 4.2108e+06\n0.944 0.29474 0.1 4.2108e+06\n";
+    fn test_parse_pcd_valid_input() {
+        let input = b"# .PCD v.7 - Point Cloud Data file format\nVERSION .7\nFIELDS x y z rgb\nSIZE 4 4 4 4\nTYPE F F F F\nCOUNT 1 1 1 1\nWIDTH 3\nHEIGHT 1\nVIEWPOINT 0 0 0 1 0 0 0\nPOINTS 3\nDATA ascii\n0.93773 0.33763 0 4.2108e+06\n0.93773 0.33763 0 4.2108e+06\n0.93773 0.33763 0 4.2108e+06";
 
-        let result = parse_points_xyzrgba(input);
-        assert!(result.is_ok());
+        let reader = PcdReader::from_bytes(input.to_vec());
 
-        let (remainder, lines) = result.unwrap();
-        assert!(remainder.is_empty());
-        assert_eq!(
-            lines,
-            vec![
-                PointXYZRGBA::new(0.93773, 0.33763, 0.0, 4.2108e+06),
-                PointXYZRGBA::new(0.90805, 0.35641, 0.0, 4.2108e+06),
-                PointXYZRGBA::new(0.81915, 0.32, 0.01, 4.2108e+06),
-                PointXYZRGBA::new(0.97192, 0.278, 0.1, 4.2108e+06),
-                PointXYZRGBA::new(0.944, 0.29474, 0.1, 4.2108e+06)
-            ]
-        );
+        let cloud = dbg!(reader.parse());
+        assert!(cloud.is_ok());
+        let cloud = cloud.unwrap();
+
+        let points = vec![
+            PointXYZRGBA::new(0.93773, 0.33763, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.93773, 0.33763, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.93773, 0.33763, 0.0, 4.2108e+06),
+        ];
+
+        let cloud = match cloud {
+            PointCloudType::XYZ_RGBA(c) => c,
+            _ => panic!("PointCloudType should be XYZ_RGBA"),
+        };
+
+        assert_eq!(cloud, PointCloud::new(points, 3, 1));
+    }
+
+    #[test]
+    fn test_parse_pcd_valid_ascii_input() {
+        let input = include_bytes!("../../data/example.pcd");
+
+        let reader = PcdReader::from_bytes(input.to_vec());
+        let cloud = reader.parse();
+        assert!(cloud.is_ok());
+
+        let cloud = cloud.unwrap();
+
+        let cloud = match cloud {
+            PointCloudType::XYZ_RGBA(c) => c,
+            _ => panic!("PointCloudType should be XYZ_RGBA"),
+        };
+
+        let expected_points = vec![
+            PointXYZRGBA::new(0.93773, 0.33763, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.90805, 0.35641, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.81915, 0.32, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.97192, 0.278, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.944, 0.29474, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.98111, 0.24247, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.93655, 0.26143, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.91631, 0.27442, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.81921, 0.29315, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.90701, 0.24109, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.83239, 0.23398, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.99185, 0.2116, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.89264, 0.21174, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.85082, 0.21212, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.81044, 0.32222, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.74459, 0.32192, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.69927, 0.32278, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.8102, 0.29315, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.75504, 0.29765, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.8102, 0.24399, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.74995, 0.24723, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.68049, 0.29768, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.66509, 0.29002, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.69441, 0.2526, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.62807, 0.22187, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.58706, 0.32199, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.52125, 0.31955, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.49351, 0.32282, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.44313, 0.32169, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.58678, 0.2929, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.53436, 0.29164, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.59308, 0.24134, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.5357, 0.2444, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.50043, 0.31235, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.44107, 0.29711, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.50727, 0.22193, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.43957, 0.23976, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.8105, 0.21112, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.73555, 0.2114, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.69907, 0.21082, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.63327, 0.21154, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.59165, 0.21201, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.52477, 0.21491, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.49375, 0.21006, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.4384, 0.19632, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.43425, 0.16052, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.3787, 0.32173, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.33444, 0.3216, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.23815, 0.32199, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.3788, 0.29315, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.33058, 0.31073, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.3788, 0.24399, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.30249, 0.29189, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.23492, 0.29446, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.29465, 0.24399, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.23514, 0.24172, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.18836, 0.32277, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.15992, 0.32176, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.08642, 0.32181, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.039994, 0.32283, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.20039, 0.31211, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.1417, 0.29506, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.20921, 0.22332, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.13884, 0.24227, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.085123, 0.29441, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.048446, 0.31279, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.086957, 0.24399, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.3788, 0.21189, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.29465, 0.19323, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.23755, 0.19348, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.29463, 0.16054, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.23776, 0.16054, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.19016, 0.21038, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.15704, 0.21245, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.08678, 0.21169, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.012746, 0.32168, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.075715, 0.32095, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.10622, 0.32304, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.16391, 0.32118, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.00088411, 0.29487, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.057568, 0.29457, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.0034333, 0.24399, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.055185, 0.24185, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.10983, 0.31352, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.15082, 0.29453, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.11534, 0.22049, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.15155, 0.24381, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.1912, 0.32173, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.281, 0.3185, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.30791, 0.32307, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.33854, 0.32148, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.21248, 0.29805, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.26372, 0.29905, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.22562, 0.24399, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.25035, 0.2371, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.29941, 0.31191, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.35845, 0.2954, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.29231, 0.22236, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.36101, 0.24172, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.0034393, 0.21129, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.07306, 0.21304, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.10579, 0.2099, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.13642, 0.21411, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.22562, 0.19323, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.24439, 0.19799, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.22591, 0.16041, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.23466, 0.16082, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.3077, 0.20998, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.3413, 0.21239, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.40551, 0.32178, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.50568, 0.3218, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.41732, 0.30844, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.44237, 0.28859, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.41591, 0.22004, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.44803, 0.24236, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.50623, 0.29315, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.50916, 0.24296, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.57019, 0.22334, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.59611, 0.32199, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.65104, 0.32199, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.72566, 0.32129, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.75538, 0.32301, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.59653, 0.29315, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.65063, 0.29315, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.59478, 0.24245, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.65063, 0.24399, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.70618, 0.29525, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.76203, 0.31284, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.70302, 0.24183, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.77062, 0.22133, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.41545, 0.21099, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.45004, 0.19812, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.4475, 0.1673, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.52031, 0.21236, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.55182, 0.21045, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.5965, 0.21131, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.65064, 0.2113, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.72216, 0.21286, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.7556, 0.20987, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.78343, 0.31973, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.87572, 0.32111, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.90519, 0.32263, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.95526, 0.34127, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.79774, 0.29271, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.85618, 0.29497, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.79975, 0.24326, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.8521, 0.24246, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.91157, 0.31224, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.95031, 0.29572, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.92223, 0.2213, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.94979, 0.24354, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.78641, 0.21505, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.87094, 0.21237, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.90637, 0.20934, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.93777, 0.21481, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.22244, -0.0296, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.2704, -0.078167, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.24416, -0.056883, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.27311, -0.10653, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.26172, -0.10653, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.2704, -0.1349, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.24428, -0.15599, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.19017, -0.025297, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.14248, -0.02428, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.19815, -0.037432, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.14248, -0.03515, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.093313, -0.02428, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.044144, -0.02428, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.093313, -0.03515, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.044144, -0.03515, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.21156, -0.17357, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.029114, -0.12594, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.036583, -0.15619, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.22446, -0.20514, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.2208, -0.2369, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.2129, -0.208, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.19316, -0.25672, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.14497, -0.27484, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.030167, -0.18748, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.1021, -0.27453, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.1689, -0.2831, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.13875, -0.28647, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.086993, -0.29568, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.044924, -0.3154, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.0066125, -0.02428, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.057362, -0.02428, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.0066125, -0.03515, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.057362, -0.03515, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.10653, -0.02428, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.15266, -0.025282, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.10653, -0.03515, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.16036, -0.037257, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.0083286, -0.1259, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(0.0007442, -0.15603, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.1741, -0.17381, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.18502, -0.02954, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.20707, -0.056403, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.23348, -0.07764, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.2244, -0.10653, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.23604, -0.10652, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.20734, -0.15641, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.23348, -0.13542, 0.0, 4.808e+06),
+            PointXYZRGBA::new(0.0061083, -0.18729, 0.0, 4.2108e+06),
+            PointXYZRGBA::new(-0.066235, -0.27472, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.17577, -0.20789, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.10861, -0.27494, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.15584, -0.25716, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.0075775, -0.31546, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.050817, -0.29595, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.10306, -0.28653, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.1319, -0.2831, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.18716, -0.20571, 0.0, 4.808e+06),
+            PointXYZRGBA::new(-0.18369, -0.23729, 0.0, 4.808e+06),
+        ];
+
+        let expected = PointCloud::new(expected_points, 213, 1);
+        assert_eq!(cloud, expected);
     }
 }

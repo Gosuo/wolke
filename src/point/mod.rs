@@ -262,14 +262,14 @@ pub enum PointCloudType {
     XYZ_RGBA(PointCloud<PointXYZRGBA>),
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct PointCloudHeader {
     sequence: u32,
     timestamp: u64,
     frame_id: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct PointCloud<P>
 where
     P: Point,
