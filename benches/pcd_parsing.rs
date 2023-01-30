@@ -7,5 +7,5 @@ pub fn parsing_benchmark(c: &mut Criterion) {
     c.bench_function("pcd ascii example parser", |b| b.iter(|| reader.parse().is_ok()));
 }
 
-criterion_group!(benches, parsing_benchmark);
-criterion_main!(benches);
+criterion_group!(parsing, parsing_benchmark);
+criterion_main!(parsing);
