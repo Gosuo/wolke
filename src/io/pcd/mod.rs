@@ -6,7 +6,7 @@ mod parser;
 
 #[derive(Debug, Error)]
 enum Error {
-    #[error("Mismatched sizes in pcd file for FIELDS: {0}, TYPE: {1} and SIZE: {2}")]
+    #[error("Mismatched sizes in pcd file for FIELDS: {0}, TYPE: {1} and SIZE: {2}. Check the input file and see if the number of values of FIELDS, SIZE, TYPE and COUNT match.")]
     MismatchSchemaSizes(usize, usize, usize),
 }
 
