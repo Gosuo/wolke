@@ -217,7 +217,7 @@ impl TryFrom<&[f32]> for PointXYZRGBA {
 }
 
 #[repr(align(16))]
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct Quaternion {
     vector: PointXYZ,
     scalar: f32,
@@ -236,10 +236,19 @@ impl From<&[f32]> for Quaternion {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ViewPoint {
     point: PointXYZ,
     orientation: Quaternion,
+}
+
+impl Default for ViewPoint {
+    fn default() -> Self {
+        Self {
+            point: Default::default(),
+            orientation: Quaternion::from(&[1.0, 0.0, 0.0, 0.0][..]),
+        }
+    }
 }
 
 // TODO!: This is terrible, fix it
