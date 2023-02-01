@@ -34,18 +34,10 @@ fn parse_header(input: &[u8]) -> Result<PcdHeader, Error> {
     let (input, num_points) = terminated(parse_points, line_ending)(input)?;
     let (input, data) = terminated(parse_data, line_ending)(input)?;
 
-    let value_kinds = types
-        .into_iter()
-        .zip(sizes.iter())
-        .map(ValueKind::from)
-        .collect::<Vec<_>>();
+    let value_kinds = types.into_iter().zip(sizes.iter()).map(ValueKind::from);
+    // .collect::<Vec<_>>();
 
-    let schema = Schema::from_iters(
-        fields.into_iter(),
-        value_kinds.into_iter(),
-        counts.into_iter(),
-    )
-    .unwrap(); // TODO Remove unwrap
+    let schema = Schema::from_iters(fields.into_iter(), value_kinds, counts.into_iter()).unwrap(); // TODO Remove unwrap
 
     let data_offset = total_size - input.len();
 
