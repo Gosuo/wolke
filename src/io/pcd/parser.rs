@@ -15,6 +15,7 @@ use crate::{io::Error, point::ViewPoint};
 use super::{DataKind, PcdHeader, Schema, TypeKind, ValueKind, Version};
 
 fn parse_header(input: &[u8]) -> Result<PcdHeader, Error> {
+    let total_size = input.len();
     // TODO Do this better, there has to be a nom way
     let (input, _) = if input[0] == b'#' {
         skip_line(input)?
@@ -35,16 +36,18 @@ fn parse_header(input: &[u8]) -> Result<PcdHeader, Error> {
 
     let value_kinds = types
         .into_iter()
-        .zip(sizes.iter().cloned())
+        .zip(sizes.iter())
         .map(ValueKind::from)
         .collect::<Vec<_>>();
 
     let schema = Schema::from_iters(
         fields.into_iter(),
         value_kinds.into_iter(),
-        sizes.into_iter(),
+        counts.into_iter(),
     )
     .unwrap(); // TODO Remove unwrap
+
+    let data_offset = total_size - input.len();
 
     let header = PcdHeader {
         version,
@@ -53,6 +56,7 @@ fn parse_header(input: &[u8]) -> Result<PcdHeader, Error> {
         viewpoint,
         num_points,
         data,
+        data_offset,
         schema,
     };
 
@@ -116,10 +120,10 @@ fn parse_types(input: &[u8]) -> IResult<&[u8], Vec<TypeKind>> {
 }
 
 // TODO Write unit tests
-fn parse_count(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
+fn parse_count(input: &[u8]) -> IResult<&[u8], Vec<u64>> {
     let (input, counts) = preceded(tag(b"COUNT "), take_while(|c| c != b'\n'))(input)?;
 
-    let (remainder, counts) = separated_list0(tag(b" "), nom::character::complete::u8)(counts)?;
+    let (remainder, counts) = separated_list0(tag(b" "), nom::character::complete::u64)(counts)?;
     assert!(
         remainder.is_empty(),
         "While parsing the sizes of the PCD file, something wasn't parsed to the end and this remained: [{}]",
@@ -190,17 +194,18 @@ fn skip_line(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use crate::{
         io::pcd::{
             parser::{
-                parse_data, parse_size, parse_types, parse_version, parse_viewpoint, parse_width,
+                parse_data, parse_size, parse_types, parse_version, parse_viewpoint, parse_width, parse_header,
             },
             DataKind, FieldDef, PcdHeader, Schema, TypeKind, ValueKind, Version,
         },
         point::ViewPoint,
     };
 
-    use super::parse_header;
 
     #[test]
     fn test_parse_version_valid_input() {
@@ -388,9 +393,10 @@ mod tests {
             version: Version::V0_7,
             width: 640,
             height: 480,
-            viewpoint: ViewPoint::default(),
+            viewpoint: ViewPoint::from(&[0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0][..]),
             num_points: 307200,
             data: DataKind::BinaryCompressed,
+            data_offset: 195,
             schema: Schema {
                 fields: vec![
                     FieldDef::from(("x".to_string(), ValueKind::F32, 1)),
@@ -400,5 +406,36 @@ mod tests {
                 ],
             },
         };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_header_valid_input2() {
+        let input = include_bytes!("../../../data/example.pcd");
+
+        let result = parse_header(input);
+        assert!(result.is_ok());
+        let result = result.unwrap();
+
+        let expected = PcdHeader {
+            version: Version::V0_7,
+            width: 213,
+            height: 1,
+            viewpoint: ViewPoint::from(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0][..]),
+            num_points: 213,
+            data: DataKind::Ascii,
+            data_offset: 175,
+            schema: Schema {
+                fields: vec![
+                    FieldDef::from(("x".to_string(), ValueKind::F32, 1)),
+                    FieldDef::from(("y".to_string(), ValueKind::F32, 1)),
+                    FieldDef::from(("z".to_string(), ValueKind::F32, 1)),
+                    FieldDef::from(("rgb".to_string(), ValueKind::F32, 1)),
+                ],
+            },
+        };
+
+        assert_eq!(result, expected);
     }
 }

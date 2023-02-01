@@ -8,9 +8,14 @@ mod parser;
 enum Error {
     #[error("Mismatched sizes in pcd file for FIELDS: {0}, TYPE: {1} and SIZE: {2}. Check the input file and see if the number of values of FIELDS, SIZE, TYPE and COUNT match.")]
     MismatchSchemaSizes(usize, usize, usize),
+    #[error("Mismatched schemata, expected {:?} got {:?}", expected, found)]
+    MismatchSchema {
+        expected: Schema,
+        found: Schema,
+    }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Version {
     V0_7,
 }
@@ -24,7 +29,7 @@ impl Version {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum DataKind {
     Ascii,
     Binary,
@@ -42,7 +47,7 @@ impl DataKind {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum TypeKind {
     Signed,
     Unsigned,
@@ -60,7 +65,7 @@ impl TypeKind {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum ValueKind {
     U8,
     U16,
@@ -78,9 +83,9 @@ impl Default for ValueKind {
     }
 }
 
-impl From<(TypeKind, u64)> for ValueKind {
-    fn from(value: (TypeKind, u64)) -> Self {
-        Self::from_(value.0, value.1)
+impl From<(TypeKind, &u64)> for ValueKind {
+    fn from(value: (TypeKind, &u64)) -> Self {
+        Self::from_(value.0, *value.1)
     }
 }
 
@@ -100,7 +105,7 @@ impl ValueKind {
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct FieldDef {
     name: String,
     value_kind: ValueKind,
@@ -127,7 +132,7 @@ impl From<(String, (ValueKind, u64))> for FieldDef {
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct Schema {
     fields: Vec<FieldDef>,
 }
@@ -164,6 +169,7 @@ struct PcdHeader {
     viewpoint: ViewPoint,
     num_points: u64,
     data: DataKind,
+    data_offset: usize,
     schema: Schema,
 }
 
