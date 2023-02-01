@@ -199,13 +199,13 @@ mod tests {
     use crate::{
         io::pcd::{
             parser::{
-                parse_data, parse_size, parse_types, parse_version, parse_viewpoint, parse_width, parse_header,
+                parse_data, parse_header, parse_size, parse_types, parse_version, parse_viewpoint,
+                parse_width,
             },
             DataKind, FieldDef, PcdHeader, Schema, TypeKind, ValueKind, Version,
         },
         point::ViewPoint,
     };
-
 
     #[test]
     fn test_parse_version_valid_input() {

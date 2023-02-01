@@ -9,10 +9,7 @@ enum Error {
     #[error("Mismatched sizes in pcd file for FIELDS: {0}, TYPE: {1} and SIZE: {2}. Check the input file and see if the number of values of FIELDS, SIZE, TYPE and COUNT match.")]
     MismatchSchemaSizes(usize, usize, usize),
     #[error("Mismatched schemata, expected {:?} got {:?}", expected, found)]
-    MismatchSchema {
-        expected: Schema,
-        found: Schema,
-    }
+    MismatchSchema { expected: Schema, found: Schema },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
