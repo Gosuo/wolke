@@ -15,7 +15,9 @@ pretty_assertions = "1.3.0"
 
 
 [dependencies]
+nalgebra = "0.32.1"
 nom = "7.1.3"
+num-traits = "0.2.15"
 thiserror = "1.0.38"
 
 [[bench]]

@@ -163,7 +163,7 @@ struct PcdHeader {
     version: Version,
     width: u64,
     height: u64,
-    viewpoint: ViewPoint,
+    viewpoint: ViewPoint<f32>, // TODO maybe make this generic? Adds a lot of complexity for little gain
     num_points: u64,
     data: DataKind,
     data_offset: usize,

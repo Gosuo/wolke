@@ -1,43 +1,44 @@
-use std::ops::{Add, AddAssign};
+use nalgebra::{Point3, Quaternion, Scalar};
+use num_traits::Zero;
 
 pub trait Point {}
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, PartialEq)]
-pub enum PointType {
-    XYZ(PointXYZ),
-    XYZ_RGBA(PointXYZRGBA),
+pub enum PointType<T: Scalar + Zero> {
+    XYZ(PointXYZ<T>),
+    XYZ_RGBA(PointXYZRGBA<T>),
 }
 
 #[repr(align(16))]
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct PointXYZ {
-    x: f32,
-    y: f32,
-    z: f32,
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct PointXYZ<T: Scalar + Zero> {
+    inner: Point3<T>,
 }
-impl PointXYZ {
-    pub fn new(x: f32, y: f32, z: f32) -> Self {
-        Self { x, y, z }
+
+impl<T: Scalar + Zero> PointXYZ<T> {
+    pub fn new(x: T, y: T, z: T) -> Self {
+        let inner = Point3::new(x, y, z);
+        Self { inner }
     }
 }
 
-impl Point for PointXYZ {}
+impl<T: Scalar + Zero> Point for PointXYZ<T> {}
 
 // TODO!: This is terrible, fix it
-impl From<&[f32]> for PointXYZ {
-    fn from(value: &[f32]) -> Self {
-        assert!(
-            value.len() >= 3,
-            "Creating a PointXYZ with less than 3 values is impossible"
-        );
-        Self {
-            x: value[0],
-            y: value[1],
-            z: value[2],
-        }
-    }
-}
+// impl From<&[f32]> for PointXYZ {
+//     fn from(value: &[f32]) -> Self {
+//         assert!(
+//             value.len() >= 3,
+//             "Creating a PointXYZ with less than 3 values is impossible"
+//         );
+//         Self {
+//             x: value[0],
+//             y: value[1],
+//             z: value[2],
+//         }
+//     }
+// }
 
 #[repr(align(4))]
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -98,35 +99,40 @@ impl From<f32> for Color {
 
 #[repr(align(16))]
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct PointXYZRGBA {
-    x: f32,
-    y: f32,
-    z: f32,
+pub struct PointXYZRGBA<T: Scalar + Zero> {
+    inner: Point3<T>,
     color: Color,
 }
 
-impl Point for PointXYZRGBA {}
+impl<T: Scalar + Zero> Point for PointXYZRGBA<T> {}
 
-impl PointXYZRGBA {
-    pub fn new(x: f32, y: f32, z: f32, rgba: f32) -> Self {
+impl<T: Scalar + Zero> PointXYZRGBA<T> {
+    pub fn new(x: T, y: T, z: T, rgba: u32) -> Self {
+        let inner = Point3::new(x, y, z);
         Self {
-            x,
-            y,
-            z,
+            inner,
             color: Color::from(rgba),
         }
     }
 
-    pub fn x(&self) -> f32 {
-        self.x
+    pub fn new_color_f32(x: T, y: T, z: T, rgba: f32) -> Self {
+        let inner = Point3::new(x, y, z);
+        Self {
+            inner,
+            color: Color::from(rgba),
+        }
     }
 
-    pub fn y(&self) -> f32 {
-        self.y
+    pub fn x(&self) -> &T {
+        &self.inner.x
     }
 
-    pub fn z(&self) -> f32 {
-        self.z
+    pub fn y(&self) -> &T {
+        &self.inner.y
+    }
+
+    pub fn z(&self) -> &T {
+        &self.inner.z
     }
 
     pub fn r(&self) -> u8 {
@@ -149,124 +155,28 @@ impl PointXYZRGBA {
         &self.color
     }
 
-    pub fn mut_x(&mut self) -> &mut f32 {
-        &mut self.x
-    }
-
-    pub fn mut_y(&mut self) -> &mut f32 {
-        &mut self.y
-    }
-
-    pub fn mut_z(&mut self) -> &mut f32 {
-        &mut self.z
-    }
-
     pub fn color_mut(&mut self) -> &mut Color {
         &mut self.color
     }
 }
 
-impl Add<&PointXYZRGBA> for PointXYZRGBA {
-    type Output = Self;
-
-    fn add(self, rhs: &PointXYZRGBA) -> Self::Output {
-        Self {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-            z: self.z + rhs.z,
-            color: self.color,
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ViewPoint<T: Scalar + Zero> {
+    point: Point3<T>,
+    quaternion: Quaternion<T>,
 }
 
-impl AddAssign<&PointXYZRGBA> for PointXYZRGBA {
-    fn add_assign(&mut self, rhs: &PointXYZRGBA) {
-        self.x += rhs.x;
-        self.y += rhs.y;
-        self.z += rhs.z;
-    }
-}
-
-impl From<&[f32; 4]> for PointXYZRGBA {
-    fn from(value: &[f32; 4]) -> Self {
-        let color = Color::from(value[3]);
-        Self {
-            x: value[0],
-            y: value[1],
-            z: value[2],
-            color,
-        }
-    }
-}
-
-// impl TryFrom<&[f32]> for PointXYZRGBA {
-
-// }
-
-impl TryFrom<&[f32]> for PointXYZRGBA {
-    type Error = String;
-
-    fn try_from(value: &[f32]) -> Result<Self, Self::Error> {
-        if value.len() < 4 {
-            Err("Creating a PointXYZRGBA from less than 4 floats is not possible".to_string())
-        } else {
-            let input = [value[0], value[1], value[2], value[3]];
-            Ok(Self::from(&input))
-        }
-    }
-}
-
-#[repr(align(16))]
-#[derive(Debug, Clone, PartialEq)]
-struct Quaternion {
-    vector: PointXYZ,
-    scalar: f32,
-}
-
-// TODO!: This is terrible, fix it
-impl From<&[f32]> for Quaternion {
-    fn from(value: &[f32]) -> Self {
-        assert!(value.len() >= 4);
-        let vector = PointXYZ::from(&value[..3]);
-
-        Self {
-            vector,
-            scalar: value[3],
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ViewPoint {
-    point: PointXYZ,
-    orientation: Quaternion,
-}
-
-impl Default for ViewPoint {
-    fn default() -> Self {
-        Self {
-            point: Default::default(),
-            orientation: Quaternion::from(&[1.0, 0.0, 0.0, 0.0][..]),
-        }
-    }
-}
-
-// TODO!: This is terrible, fix it
-impl From<&[f32]> for ViewPoint {
-    fn from(value: &[f32]) -> Self {
-        assert!(value.len() >= 7);
-        let point = PointXYZ::from(&value[..3]);
-        let orientation = Quaternion::from(&value[3..]);
-
-        Self { point, orientation }
+impl<T: Scalar + Zero> ViewPoint<T> {
+    pub fn new(point: Point3<T>, quaternion: Quaternion<T>) -> Self {
+        Self { point, quaternion }
     }
 }
 
 #[allow(non_camel_case_types)]
 #[derive(Debug)]
-pub enum PointCloudType {
-    XYZ(PointCloud<PointXYZ>),
-    XYZ_RGBA(PointCloud<PointXYZRGBA>),
+pub enum PointCloudType<T: Scalar + Zero> {
+    XYZ(PointCloud<PointXYZ<T>>),
+    XYZ_RGBA(PointCloud<PointXYZRGBA<T>>),
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -299,44 +209,4 @@ impl<P: Point> PointCloud<P> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pointxyz_size() {
-        assert_eq!(std::mem::size_of::<PointXYZ>(), 16)
-    }
-
-    #[test]
-    fn pointxyz_default() {
-        let point = PointXYZ::default();
-        assert_eq!(point.x, 0_f32);
-        assert_eq!(point.y, 0_f32);
-        assert_eq!(point.z, 0_f32);
-    }
-
-    #[test]
-    fn pointxyz_from_slice() {
-        let point = PointXYZ::from(&[1.0, 1.0, 1.0][..]);
-        assert_eq!(point.x, 1_f32);
-        assert_eq!(point.y, 1_f32);
-        assert_eq!(point.z, 1_f32);
-    }
-
-    #[test]
-    fn quaternion_from_slice() {
-        let quaternion = Quaternion::from(&[1.0, 1.0, 1.0, 1.0][..]);
-        assert_eq!(quaternion.vector, PointXYZ::from(&[1.0, 1.0, 1.0][..]));
-        assert_eq!(quaternion.scalar, 1_f32);
-    }
-
-    #[test]
-    fn viewpoint_from_slice() {
-        let viewpoint = ViewPoint::from(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0][..]);
-        assert_eq!(viewpoint.point, PointXYZ::from(&[0.0, 0.0, 0.0][..]));
-        assert_eq!(
-            viewpoint.orientation,
-            Quaternion::from(&[1.0, 0.0, 0.0, 0.0][..])
-        );
-    }
-}
+mod tests {}
