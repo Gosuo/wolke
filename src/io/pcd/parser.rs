@@ -154,9 +154,9 @@ fn parse_viewpoint(input: &[u8]) -> IResult<&[u8], ViewPoint<f32>> {
     assert!(remainder.is_empty());
     assert!(points.len() >= 7);
 
-    let point = nalgebra::Point3::from_slice(&points[..3]);
-    let quaternion = nalgebra::Quaternion::new(points[3], points[4], points[5], points[6]);
-    let viewpoint = ViewPoint::new(point, quaternion);
+    let viewpoint = ViewPoint::new(
+        points[0], points[1], points[2], points[3], points[4], points[5], points[6],
+    );
 
     Ok((input, viewpoint))
 }
@@ -188,7 +188,6 @@ fn skip_line(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use nalgebra::{Point3, Quaternion};
     use pretty_assertions::assert_eq;
 
     use crate::{
@@ -334,18 +333,12 @@ mod tests {
         let input = b"VIEWPOINT 0 0 0 1 0 0 0";
         let (remainder, result) = parse_viewpoint(input).unwrap();
         assert!(remainder.is_empty());
-        assert_eq!(
-            result,
-            ViewPoint::new(Point3::new(0.0, 0.0, 0.0), Quaternion::new(1.0, 0.0, 0.0, 0.0))
-        );
+        assert_eq!(result, ViewPoint::new(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0));
 
         let input = b"VIEWPOINT 1 0 100 1 0 2.0 2.3";
         let (remainder, result) = parse_viewpoint(input).unwrap();
         assert!(remainder.is_empty());
-        assert_eq!(
-            result,
-            ViewPoint::new(Point3::new(1.0, 0.0, 100.0), Quaternion::new(1.0, 0.0, 2.0, 2.3))
-        );
+        assert_eq!(result, ViewPoint::new(1.0, 0.0, 100.0, 1.0, 0.0, 2.0, 2.3));
 
         let input = b"VIEWPOINT -1 -10 100 1 -0 2.0 2.3\nremainder";
         let (remainder, result) = parse_viewpoint(input).unwrap();
@@ -353,7 +346,7 @@ mod tests {
         assert_eq!(remainder, b"\nremainder");
         assert_eq!(
             result,
-            ViewPoint::new(Point3::new(-1.0, -10.0, 100.0), Quaternion::new(1.0, -0.0, 2.0, 2.3))
+            ViewPoint::new(-1.0, -10.0, 100.0, 1.0, -0.0, 2.0, 2.3)
         );
     }
 
@@ -388,7 +381,7 @@ mod tests {
             version: Version::V0_7,
             width: 640,
             height: 480,
-            viewpoint: ViewPoint::new(Point3::new(0.0, 0.0, 0.0), Quaternion::new(0.0, 1.0, 0.0, 0.0)),
+            viewpoint: ViewPoint::new(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
             num_points: 307200,
             data: DataKind::BinaryCompressed,
             data_offset: 195,
@@ -417,7 +410,7 @@ mod tests {
             version: Version::V0_7,
             width: 213,
             height: 1,
-            viewpoint: ViewPoint::new(Point3::new(0.0, 0.0, 0.0), Quaternion::new(1.0, 0.0, 0.0, 0.0)),
+            viewpoint: ViewPoint::new(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
             num_points: 213,
             data: DataKind::Ascii,
             data_offset: 175,

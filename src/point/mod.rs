@@ -167,7 +167,9 @@ pub struct ViewPoint<T: Scalar + Zero> {
 }
 
 impl<T: Scalar + Zero> ViewPoint<T> {
-    pub fn new(point: Point3<T>, quaternion: Quaternion<T>) -> Self {
+    pub fn new(x: T, y: T, z: T, w: T, i: T, j: T, k: T) -> Self {
+        let point = Point3::new(x, y, z);
+        let quaternion = Quaternion::new(w, i, j, k);
         Self { point, quaternion }
     }
 }
