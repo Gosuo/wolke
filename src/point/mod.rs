@@ -115,7 +115,12 @@ impl<T: Scalar + Zero> PointXYZRGBA<T> {
         }
     }
 
-    pub fn new_color_f32(x: T, y: T, z: T, rgba: f32) -> Self {
+    pub fn new_color(x: T, y: T, z: T, color: Color) -> Self {
+        let inner = Point3::new(x, y, z);
+        Self { inner, color }
+    }
+
+    pub fn new_color_float(x: T, y: T, z: T, rgba: f32) -> Self {
         let inner = Point3::new(x, y, z);
         Self {
             inner,

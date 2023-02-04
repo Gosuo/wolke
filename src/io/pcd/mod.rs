@@ -1,15 +1,69 @@
+use std::collections::HashMap;
+
+use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::point::ViewPoint;
 
 mod parser;
+mod serde;
 
 #[derive(Debug, Error)]
-enum Error {
+pub enum Error {
     #[error("Mismatched sizes in pcd file for FIELDS: {0}, TYPE: {1} and SIZE: {2}. Check the input file and see if the number of values of FIELDS, SIZE, TYPE and COUNT match.")]
     MismatchSchemaSizes(usize, usize, usize),
     #[error("Mismatched schemata, expected {:?} got {:?}", expected, found)]
-    MismatchSchema { expected: Schema, found: Schema },
+    MismatchSchema {
+        expected: Schema,
+        found: Option<Schema>,
+        additional: Option<String>,
+    },
+    // #[error("Underlying system Io error")]
+    // IoError(crate::io::Error),
+    #[error("A system IO Error occured: {}", 0)]
+    IoError(#[from] std::io::Error),
+    #[error("Failed to parse {} in file at: {}", ty, pos)]
+    ParseValueError {
+        data: DataKind,
+        ty: String,
+        pos: usize,
+    },
+}
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::MismatchSchemaSizes(l0, l1, l2), Self::MismatchSchemaSizes(r0, r1, r2)) => {
+                l0 == r0 && l1 == r1 && l2 == r2
+            }
+            (
+                Self::MismatchSchema {
+                    expected: l_expected,
+                    found: l_found,
+                    additional: l_additional,
+                },
+                Self::MismatchSchema {
+                    expected: r_expected,
+                    found: r_found,
+                    additional: r_additional,
+                },
+            ) => l_expected == r_expected && l_found == r_found && l_additional == r_additional,
+            (Self::IoError(l0), Self::IoError(r0)) => unimplemented!("Cannot compare IoErrors"),
+            (
+                Self::ParseValueError {
+                    data: l_data,
+                    ty: l_ty,
+                    pos: l_pos,
+                },
+                Self::ParseValueError {
+                    data: r_data,
+                    ty: r_ty,
+                    pos: r_pos,
+                },
+            ) => l_data == r_data && l_ty == r_ty && l_pos == r_pos,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -27,7 +81,7 @@ impl Version {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum DataKind {
+pub enum DataKind {
     Ascii,
     Binary,
     BinaryCompressed,
@@ -102,39 +156,43 @@ impl ValueKind {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 struct FieldDef {
-    name: String,
     value_kind: ValueKind,
     count: u64,
 }
 
-impl From<(String, ValueKind, u64)> for FieldDef {
-    fn from(value: (String, ValueKind, u64)) -> Self {
+impl FieldDef {
+    fn new(value_kind: ValueKind, count: u64) -> Self {
+        Self { value_kind, count }
+    }
+}
+
+impl From<(ValueKind, u64)> for FieldDef {
+    fn from(value: (ValueKind, u64)) -> Self {
         Self {
-            name: value.0,
-            value_kind: value.1,
-            count: value.2,
+            value_kind: value.0,
+            count: value.1,
         }
     }
 }
 
-impl From<(String, (ValueKind, u64))> for FieldDef {
-    fn from(value: (String, (ValueKind, u64))) -> Self {
-        Self {
-            name: value.0,
-            value_kind: value.1 .0,
-            count: value.1 .1,
-        }
-    }
-}
-
-#[derive(Debug, Default, PartialEq, Eq)]
-struct Schema {
-    fields: Vec<FieldDef>,
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
+pub struct Schema {
+    fields: HashMap<String, SmallVec<[FieldDef; 2]>>,
 }
 
 impl Schema {
+    fn empty() -> Self {
+        Self {
+            fields: HashMap::new(),
+        }
+    }
+
+    fn new(fields: HashMap<String, SmallVec<[FieldDef; 2]>>) -> Self {
+        Self { fields }
+    }
+
     fn from_iters<S, V, U>(names: S, value_kinds: V, counts: U) -> Result<Self, Error>
     where
         S: Iterator<Item = String> + ExactSizeIterator,
@@ -149,12 +207,39 @@ impl Schema {
             ));
         }
 
-        let fields = names
-            .zip(value_kinds.zip(counts))
-            .map(FieldDef::from)
-            .collect::<Vec<_>>();
+        let mut fields = HashMap::new();
+        names.zip(value_kinds.zip(counts)).for_each(|(name, def)| {
+            fields.insert(name, smallvec::smallvec![FieldDef::from(def)]);
+        });
 
         Ok(Self { fields })
+    }
+
+    fn insert<S: Into<String>>(&mut self, name: S, def: &[FieldDef]) {
+        self.fields.insert(name.into(), SmallVec::from_slice(def));
+    }
+
+    fn remove(&mut self, name: &str) {
+        self.fields.remove(name);
+    }
+
+    fn is_subset(&self, rhs: &Self) -> bool {
+        if self.fields.len() != rhs.fields.len()
+            || !self.fields.keys().all(|k| rhs.fields.contains_key(k))
+        {
+            return false;
+        }
+
+        // This is horribly inefficient, but it _should_ be fine for our usecase, as
+        // schemata shouldn't get to large. A better implementation is very welcome
+        // TODO Benchmarks needed to gauge performance
+        self.fields
+            .iter()
+            .all(|(name, defs)| defs.iter().all(|def| rhs.fields[name].contains(def)))
+    }
+
+    fn is_superset(&self, rhs: &Self) -> bool {
+        rhs.is_subset(self)
     }
 }
 
@@ -172,7 +257,11 @@ struct PcdHeader {
 
 #[cfg(test)]
 mod tests {
-    use crate::io::pcd::FieldDef;
+    use std::collections::HashMap;
+
+    use smallvec::smallvec;
+
+    use crate::io::pcd::{Error, FieldDef};
 
     use super::{Schema, ValueKind};
 
@@ -187,11 +276,20 @@ mod tests {
         let schema = schema.unwrap();
 
         let expected = Schema {
-            fields: vec![
-                FieldDef::from(("x".to_string(), ValueKind::F32, 1)),
-                FieldDef::from(("y".to_string(), ValueKind::F32, 1)),
-                FieldDef::from(("z".to_string(), ValueKind::F32, 1)),
-            ],
+            fields: HashMap::from([
+                (
+                    "x".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "y".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "z".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+            ]),
         };
 
         assert_eq!(schema, expected);
@@ -204,5 +302,102 @@ mod tests {
         let counts = vec![1];
 
         let schema = Schema::from_iters(names.into_iter(), values.into_iter(), counts.into_iter());
+        assert!(schema.is_err());
+        let err = schema.unwrap_err();
+
+        assert_eq!(err, Error::MismatchSchemaSizes(3, 2, 1));
+    }
+
+    #[test]
+    fn schema_subset() {
+        let lhs = Schema {
+            fields: HashMap::from([
+                (
+                    "x".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "y".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "z".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+            ]),
+        };
+        let rhs = Schema {
+            fields: HashMap::from([
+                (
+                    "x".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "y".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "z".to_string(),
+                    smallvec![
+                        FieldDef::from((ValueKind::F32, 1)),
+                        FieldDef::from((ValueKind::U32, 2))
+                    ],
+                ),
+            ]),
+        };
+
+        assert!(lhs.is_subset(&rhs));
+        assert!(!rhs.is_subset(&lhs));
+    }
+
+    #[test]
+    fn schema_insert() {
+        let mut schema = Schema {
+            fields: HashMap::from([
+                (
+                    "x".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "y".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "z".to_string(),
+                    smallvec![
+                        FieldDef::from((ValueKind::F32, 1)),
+                        FieldDef::from((ValueKind::U32, 2))
+                    ],
+                ),
+            ]),
+        };
+
+        schema.insert("rgba".to_string(), &[FieldDef::from((ValueKind::U8, 3))]);
+
+        let expected = Schema {
+            fields: HashMap::from([
+                (
+                    "x".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "y".to_string(),
+                    smallvec![FieldDef::from((ValueKind::F32, 1))],
+                ),
+                (
+                    "z".to_string(),
+                    smallvec![
+                        FieldDef::from((ValueKind::F32, 1)),
+                        FieldDef::from((ValueKind::U32, 2))
+                    ],
+                ),
+                (
+                    "rgba".to_string(),
+                    smallvec![FieldDef::from((ValueKind::U8, 3))],
+                ),
+            ]),
+        };
+
+        assert_eq!(schema, expected);
     }
 }

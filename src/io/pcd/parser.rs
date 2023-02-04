@@ -188,6 +188,8 @@ fn skip_line(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use pretty_assertions::assert_eq;
 
     use crate::{
@@ -371,6 +373,7 @@ mod tests {
 
     #[test]
     fn parse_header_valid_input() {
+        use smallvec::smallvec;
         let input = include_bytes!("../../../data/table_scene_mug_stereo_textured.pcd");
 
         let result = parse_header(input);
@@ -386,12 +389,24 @@ mod tests {
             data: DataKind::BinaryCompressed,
             data_offset: 195,
             schema: Schema {
-                fields: vec![
-                    FieldDef::from(("x".to_string(), ValueKind::F32, 1)),
-                    FieldDef::from(("y".to_string(), ValueKind::F32, 1)),
-                    FieldDef::from(("z".to_string(), ValueKind::F32, 1)),
-                    FieldDef::from(("rgba".to_string(), ValueKind::U32, 1)),
-                ],
+                fields: HashMap::from([
+                    (
+                        "x".to_string(),
+                        smallvec![FieldDef::from((ValueKind::F32, 1))],
+                    ),
+                    (
+                        "y".to_string(),
+                        smallvec![FieldDef::from((ValueKind::F32, 1))],
+                    ),
+                    (
+                        "z".to_string(),
+                        smallvec![FieldDef::from((ValueKind::F32, 1))],
+                    ),
+                    (
+                        "rgba".to_string(),
+                        smallvec![FieldDef::from((ValueKind::U32, 1))],
+                    ),
+                ]),
             },
         };
 
@@ -400,6 +415,7 @@ mod tests {
 
     #[test]
     fn parse_header_valid_input2() {
+        use smallvec::smallvec;
         let input = include_bytes!("../../../data/example.pcd");
 
         let result = parse_header(input);
@@ -415,12 +431,24 @@ mod tests {
             data: DataKind::Ascii,
             data_offset: 175,
             schema: Schema {
-                fields: vec![
-                    FieldDef::from(("x".to_string(), ValueKind::F32, 1)),
-                    FieldDef::from(("y".to_string(), ValueKind::F32, 1)),
-                    FieldDef::from(("z".to_string(), ValueKind::F32, 1)),
-                    FieldDef::from(("rgb".to_string(), ValueKind::F32, 1)),
-                ],
+                fields: HashMap::from([
+                    (
+                        "x".to_string(),
+                        smallvec![FieldDef::from((ValueKind::F32, 1))],
+                    ),
+                    (
+                        "y".to_string(),
+                        smallvec![FieldDef::from((ValueKind::F32, 1))],
+                    ),
+                    (
+                        "z".to_string(),
+                        smallvec![FieldDef::from((ValueKind::F32, 1))],
+                    ),
+                    (
+                        "rgb".to_string(),
+                        smallvec![FieldDef::from((ValueKind::F32, 1))],
+                    ),
+                ]),
             },
         };
 
