@@ -1,4 +1,4 @@
-use std::{any::type_name, collections::HashMap, io::BufRead, str::FromStr};
+use std::{any::type_name, collections::HashMap, io::BufRead, str::FromStr, ops::AddAssign};
 
 use nalgebra::Scalar;
 use num_traits::Zero;
@@ -97,6 +97,8 @@ impl<T: Scalar + Zero + FromStr> PcdDeserialize for PointXYZRGBA<T> {
         };
 
         let point = PointXYZRGBA::new_color(x, y, z, rgba);
+
+        line_count.add_assign(1);
 
         Ok(point)
     }
