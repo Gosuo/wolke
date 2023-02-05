@@ -7,7 +7,7 @@ pub trait Point {}
 #[derive(Debug, PartialEq)]
 pub enum PointType<T: Scalar + Zero> {
     XYZ(PointXYZ<T>),
-    XYZ_RGBA(PointXYZRGBA<T>),
+    XYZ_RGBA(PointXYZRGBA),
 }
 
 #[repr(align(16))]
@@ -99,15 +99,15 @@ impl From<f32> for Color {
 
 #[repr(align(16))]
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct PointXYZRGBA<T: Scalar + Zero> {
-    inner: Point3<T>,
+pub struct PointXYZRGBA {
+    inner: Point3<f32>,
     color: Color,
 }
 
-impl<T: Scalar + Zero> Point for PointXYZRGBA<T> {}
+impl Point for PointXYZRGBA {}
 
-impl<T: Scalar + Zero> PointXYZRGBA<T> {
-    pub fn new(x: T, y: T, z: T, rgba: u32) -> Self {
+impl PointXYZRGBA {
+    pub fn new(x: f32, y: f32, z: f32, rgba: u32) -> Self {
         let inner = Point3::new(x, y, z);
         Self {
             inner,
@@ -115,12 +115,12 @@ impl<T: Scalar + Zero> PointXYZRGBA<T> {
         }
     }
 
-    pub fn new_color(x: T, y: T, z: T, color: Color) -> Self {
+    pub fn new_color(x: f32, y: f32, z: f32, rgba: Color) -> Self {
         let inner = Point3::new(x, y, z);
-        Self { inner, color }
+        Self { inner, color: rgba }
     }
 
-    pub fn new_color_float(x: T, y: T, z: T, rgba: f32) -> Self {
+    pub fn new_color_float(x: f32, y: f32, z: f32, rgba: f32) -> Self {
         let inner = Point3::new(x, y, z);
         Self {
             inner,
@@ -128,15 +128,15 @@ impl<T: Scalar + Zero> PointXYZRGBA<T> {
         }
     }
 
-    pub fn x(&self) -> &T {
+    pub fn x(&self) -> &f32 {
         &self.inner.x
     }
 
-    pub fn y(&self) -> &T {
+    pub fn y(&self) -> &f32 {
         &self.inner.y
     }
 
-    pub fn z(&self) -> &T {
+    pub fn z(&self) -> &f32 {
         &self.inner.z
     }
 
@@ -166,13 +166,13 @@ impl<T: Scalar + Zero> PointXYZRGBA<T> {
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct ViewPoint<T: Scalar + Zero> {
-    point: Point3<T>,
-    quaternion: Quaternion<T>,
+pub struct ViewPoint {
+    point: Point3<f32>,
+    quaternion: Quaternion<f32>,
 }
 
-impl<T: Scalar + Zero> ViewPoint<T> {
-    pub fn new(x: T, y: T, z: T, w: T, i: T, j: T, k: T) -> Self {
+impl ViewPoint {
+    pub fn new(x: f32, y: f32, z: f32, w: f32, i: f32, j: f32, k: f32) -> Self {
         let point = Point3::new(x, y, z);
         let quaternion = Quaternion::new(w, i, j, k);
         Self { point, quaternion }
@@ -183,7 +183,7 @@ impl<T: Scalar + Zero> ViewPoint<T> {
 #[derive(Debug)]
 pub enum PointCloudType<T: Scalar + Zero> {
     XYZ(PointCloud<PointXYZ<T>>),
-    XYZ_RGBA(PointCloud<PointXYZRGBA<T>>),
+    XYZ_RGBA(PointCloud<PointXYZRGBA>),
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]

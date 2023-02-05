@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Index};
 
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -157,7 +157,7 @@ impl ValueKind {
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
-struct FieldDef {
+pub struct FieldDef {
     value_kind: ValueKind,
     count: u64,
 }
@@ -179,7 +179,20 @@ impl From<(ValueKind, u64)> for FieldDef {
 
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct Schema {
-    fields: HashMap<String, SmallVec<[FieldDef; 2]>>,
+    fields: HashMap<String, SmallVec<[FieldDef; Self::FIELDS_SIZE]>>,
+}
+
+impl Schema {
+    // Constant deciding how many field definitions should fit into the smallvec
+    const FIELDS_SIZE: usize = 4;
+}
+
+impl Index<&str> for Schema {
+    type Output = SmallVec<[FieldDef; Self::FIELDS_SIZE]>;
+
+    fn index(&self, index: &str) -> &Self::Output {
+        &self.fields[index]
+    }
 }
 
 impl Schema {
@@ -189,7 +202,7 @@ impl Schema {
         }
     }
 
-    fn new(fields: HashMap<String, SmallVec<[FieldDef; 2]>>) -> Self {
+    fn new(fields: HashMap<String, SmallVec<[FieldDef; Self::FIELDS_SIZE]>>) -> Self {
         Self { fields }
     }
 
@@ -248,7 +261,7 @@ struct PcdHeader {
     version: Version,
     width: u64,
     height: u64,
-    viewpoint: ViewPoint<f32>, // TODO maybe make this generic? Adds a lot of complexity for little gain
+    viewpoint: ViewPoint,
     num_points: u64,
     data: DataKind,
     data_offset: usize,

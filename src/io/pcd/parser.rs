@@ -147,7 +147,7 @@ fn parse_height(input: &[u8]) -> IResult<&[u8], u64> {
     Ok((input, height))
 }
 
-fn parse_viewpoint(input: &[u8]) -> IResult<&[u8], ViewPoint<f32>> {
+fn parse_viewpoint(input: &[u8]) -> IResult<&[u8], ViewPoint> {
     let (input, points) = preceded(tag(b"VIEWPOINT "), take_while(|c| c != b'\n'))(input)?;
 
     let (remainder, points) = separated_list0(tag(b" "), float)(points)?;
